@@ -1,3 +1,9 @@
+# The compiled binary
+add_alias
+
+# Vim swap files
+.*.swp
+
 # Compiled Object files, Static and Dynamic libs (Shared Objects)
 *.o
 *.a
