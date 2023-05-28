@@ -15,24 +15,37 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/user"
 	"strings"
 
 	"github.com/asjoyner/googoauth"
-	directory "github.com/google/google-api-go-client/admin/directory_v1"
+	directory "google.golang.org/api/admin/directory/v1"
+	groupssettings "google.golang.org/api/groupssettings/v1"
+	"google.golang.org/api/option"
 )
 
 var (
 	defaultDomain = "joyner.ws"
-	id     = "832157669857-it75mreuujhlm24iktv9927gakvnm1ni.apps.googleusercontent.com"
-	secret = "i1wjHCLLhCXhxD9nZJbnT0Hu"
-	scope  = []string{directory.AdminDirectoryGroupScope}
+	id            = "832157669857-it75mreuujhlm24iktv9927gakvnm1ni.apps.googleusercontent.com"
+	secret        = "i1wjHCLLhCXhxD9nZJbnT0Hu"
+	scope         = []string{
+		directory.AdminDirectoryGroupScope,     // to create a group, and add members
+		groupssettings.AppsGroupsSettingsScope, // to set the isArchived bit
+	}
 )
 
-func addAlias(service *directory.Service, alias, domain, target, additional string) error {
+func addAlias(c *http.Client, alias, domain, target, additional string) error {
+	ctx := context.Background()
+	directoryService, err := directory.NewService(ctx, option.WithHTTPClient(c))
+	if err != nil {
+		fmt.Printf("failed to make directoryService connection: %s", err)
+		os.Exit(1)
+	}
 	groupName := alias + "@" + domain
 	g := &directory.Group{
 		Name:        alias,
@@ -41,7 +54,7 @@ func addAlias(service *directory.Service, alias, domain, target, additional stri
 	}
 
 	// Create a group with the name of the alias
-	_, err := directory.NewGroupsService(service).Insert(g).Do()
+	group, err := directory.NewGroupsService(directoryService).Insert(g).Do()
 	if err != nil {
 		return fmt.Errorf("failed to create group %s: %s", alias, err)
 	}
@@ -53,9 +66,20 @@ func addAlias(service *directory.Service, alias, domain, target, additional stri
 		Type:  "USER",
 		Email: target,
 	}
-	_, err = directory.NewMembersService(service).Insert(groupName, m).Do()
+	_, err = directory.NewMembersService(directoryService).Insert(group.Id, m).Do()
 	if err != nil {
 		return fmt.Errorf("failed to add %s to group %s: %s", target, alias, err)
+	}
+
+	// Enable the isArchived bit to store conversation history
+	groupssettingsService, err := groupssettings.NewService(ctx, option.WithHTTPClient(c))
+	if err != nil {
+		return fmt.Errorf("failed to initialize groupssettingsService: %s", err)
+	}
+	archiveItPlease := &groupssettings.Groups{IsArchived: "true"}
+	groupsService := groupssettings.NewGroupsService(groupssettingsService)
+	if _, err := groupsService.Update(groupName, archiveItPlease).Do(); err != nil {
+		return fmt.Errorf("failed to request the group (%s) be archived: %s", group.Id, err)
 	}
 
 	// Add any additional addresses
@@ -65,7 +89,7 @@ func addAlias(service *directory.Service, alias, domain, target, additional stri
 			continue
 		}
 		m.Email = add
-		_, err = directory.NewMembersService(service).Insert(groupName, m).Do()
+		_, err = directory.NewMembersService(directoryService).Insert(groupName, m).Do()
 		if err != nil {
 			return fmt.Errorf("failed to add %s to group %s: %s", add, alias, err)
 		}
@@ -95,14 +119,9 @@ func main() {
 
 	// Setup the oauth connection to the admin/directory service
 	c := googoauth.Client(id, secret, scope)
-	service, err := directory.New(c)
-	if err != nil {
-		fmt.Printf("failed to make directory service connection: %s", err)
-		os.Exit(1)
-	}
 
 	for _, alias := range flag.Args() {
-		if err := addAlias(service, alias, *domain, *target, *additional); err != nil {
+		if err := addAlias(c, alias, *domain, *target, *additional); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
