@@ -71,14 +71,22 @@ func addAlias(c *http.Client, alias, domain, target, additional string) error {
 		return fmt.Errorf("failed to add %s to group %s: %s", target, alias, err)
 	}
 
-	// Enable the isArchived bit to store conversation history
+	// Configure the default settings for the group
 	groupssettingsService, err := groupssettings.NewService(ctx, option.WithHTTPClient(c))
 	if err != nil {
 		return fmt.Errorf("failed to initialize groupssettingsService: %s", err)
 	}
-	archiveItPlease := &groupssettings.Groups{IsArchived: "true"}
+	preferredDefaults := &groupssettings.Groups{
+		// Store conversation history.
+		IsArchived: "true",
+		// Turn off moderation.  (This is the default, but the docs don't seem to
+		// be happy about it, so I set it out of an abundance of caution.)
+		MessageModerationLevel: "MODERATE_NONE",
+		// Turn off spam filtering at the group level (letting GMail do that).
+		SpamModerationLevel: "ALLOW",
+	}
 	groupsService := groupssettings.NewGroupsService(groupssettingsService)
-	if _, err := groupsService.Update(groupName, archiveItPlease).Do(); err != nil {
+	if _, err := groupsService.Update(groupName, preferredDefaults).Do(); err != nil {
 		return fmt.Errorf("failed to request the group (%s) be archived: %s", group.Id, err)
 	}
 
