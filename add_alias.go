@@ -87,7 +87,12 @@ func addAlias(c *http.Client, alias, domain, target, additional string) error {
 	}
 	groupsService := groupssettings.NewGroupsService(groupssettingsService)
 	if _, err := groupsService.Update(groupName, preferredDefaults).Do(); err != nil {
-		return fmt.Errorf("failed to request the group (%s) be archived: %s", group.Id, err)
+		req, subErr := preferredDefaults.MarshalJSON()
+		if subErr != nil {
+			fmt.Println("could not marshal preferredDefaults: ", subErr)
+		}
+		fmt.Println("attempted to set preferredDefaults with this struct: ", string(req))
+		return fmt.Errorf("failed to request set the default settings for the group (id: %s): %s", group.Id, err)
 	}
 
 	// Add any additional addresses
