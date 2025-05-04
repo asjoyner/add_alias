@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/user"
 	"strings"
+	"time"
 
 	"github.com/asjoyner/googoauth"
 	directory "google.golang.org/api/admin/directory/v1"
@@ -54,9 +55,17 @@ func addAlias(c *http.Client, alias, domain, target, additional string) error {
 	}
 
 	// Create a group with the name of the alias
-	group, err := directory.NewGroupsService(directoryService).Insert(g).Do()
+	gsvc := directory.NewGroupsService(directoryService)
+	group, err := gsvc.Insert(g).Do()
 	if err != nil {
-		return fmt.Errorf("failed to create group %s: %s", alias, err)
+		if strings.Contains(err.Error(), "Error 409") {
+			fmt.Println("This group already exists, let's check the other bits...")
+			if group, err = gsvc.Get(groupName).Do(); err != nil {
+				return fmt.Errorf("failed to retrieve existing group %s: %s", alias, err)
+			}
+		} else {
+			return fmt.Errorf("failed to create group %s: %s", alias, err)
+		}
 	}
 
 	// Add a user to it
@@ -66,9 +75,25 @@ func addAlias(c *http.Client, alias, domain, target, additional string) error {
 		Type:  "USER",
 		Email: target,
 	}
-	_, err = directory.NewMembersService(directoryService).Insert(group.Id, m).Do()
-	if err != nil {
-		return fmt.Errorf("failed to add %s to group %s: %s", target, alias, err)
+	var count int
+	for { // retry because my code is faster than Google's group service  :(
+		_, err = directory.NewMembersService(directoryService).Insert(group.Id, m).Do()
+		if err != nil {
+			if strings.Contains(err.Error(), "Error 409") {
+				fmt.Println("The target user is already in the group.  Let's check the other bits.")
+				break
+			}
+			if strings.Contains(err.Error(), "Error 404") {
+				time.Sleep(1 * time.Second)
+				if count < 10 {
+					fmt.Println("Group hasn't materialized yet, waiting patiently...")
+					count += 1
+					continue
+				}
+			}
+			return fmt.Errorf("failed to add %s to group %s: %s", target, alias, err)
+		}
+		break
 	}
 
 	// Configure the default settings for the group
@@ -104,6 +129,10 @@ func addAlias(c *http.Client, alias, domain, target, additional string) error {
 		m.Email = add
 		_, err = directory.NewMembersService(directoryService).Insert(groupName, m).Do()
 		if err != nil {
+			if strings.Contains(err.Error(), "Error 409") {
+				fmt.Printf("The additional member (%s) is already in the group.  Let's check the other bits.\n", add)
+				break
+			}
 			return fmt.Errorf("failed to add %s to group %s: %s", add, alias, err)
 		}
 	}
